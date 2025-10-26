@@ -15,21 +15,49 @@ try:
     if not firebase_admin._apps:
         # Try to get credentials from Streamlit secrets
         if "firebase" in st.secrets:
-            cred_dict = dict(st.secrets["firebase"])
+            # Convert secrets to proper dict format for Firebase
+            # Explicitly convert to string to ensure compatibility
+            cred_dict = {
+                "type": str(st.secrets["firebase"]["type"]),
+                "project_id": str(st.secrets["firebase"]["project_id"]),
+                "private_key_id": str(st.secrets["firebase"]["private_key_id"]),
+                "private_key": str(st.secrets["firebase"]["private_key"]),
+                "client_email": str(st.secrets["firebase"]["client_email"]),
+                "client_id": str(st.secrets["firebase"]["client_id"]),
+                "auth_uri": str(st.secrets["firebase"]["auth_uri"]),
+                "token_uri": str(st.secrets["firebase"]["token_uri"]),
+                "auth_provider_x509_cert_url": str(
+                    st.secrets["firebase"]["auth_provider_x509_cert_url"]
+                ),
+                "client_x509_cert_url": str(
+                    st.secrets["firebase"]["client_x509_cert_url"]
+                ),
+            }
+            # Add optional fields if present
+            if "universe_domain" in st.secrets["firebase"]:
+                cred_dict["universe_domain"] = str(
+                    st.secrets["firebase"]["universe_domain"]
+                )
+
             cred = credentials.Certificate(cred_dict)
             firebase_admin.initialize_app(cred)
             db = firestore.client()
             FIREBASE_ENABLED = True
+            print("✅ Firebase initialized successfully!")
         else:
             FIREBASE_ENABLED = False
             db = None
+            print("ℹ️ Firebase secrets not configured, using JSON fallback")
     else:
         db = firestore.client()
         FIREBASE_ENABLED = True
 except Exception as e:
     FIREBASE_ENABLED = False
     db = None
-    print(f"Firebase not available: {e}")
+    print(f"⚠️ Firebase initialization failed: {e}")
+    import traceback
+
+    traceback.print_exc()
 
 # Configure page
 st.set_page_config(
@@ -59,10 +87,18 @@ def save_progress_web(name, scorer, filename="quiz_progress.json"):
     # Try Firebase first
     if FIREBASE_ENABLED and db:
         try:
-            db.collection("quiz_progress").document(name).set(progress_data)
+            # Convert integer keys to strings for Firestore compatibility
+            firebase_data = {
+                "answers": {str(k): v for k, v in scorer.answers.items()},
+                "scores": scorer.scores,
+                "last_updated": datetime.now().isoformat(),
+                "completed": len(scorer.answers) == 45,
+            }
+            db.collection("quiz_progress").document(name).set(firebase_data)
+            print(f"✅ Progress saved to Firebase for {name}")
             return
         except Exception as e:
-            print(f"Firebase save failed: {e}, falling back to JSON")
+            print(f"⚠️ Firebase save failed: {e}, falling back to JSON")
 
     # Fallback to JSON file
     data = {}
@@ -86,9 +122,14 @@ def load_progress_web(name, filename="quiz_progress.json"):
         try:
             doc = db.collection("quiz_progress").document(name).get()
             if doc.exists:
-                return doc.to_dict()
+                data = doc.to_dict()
+                # Convert string keys back to integers for answers
+                if "answers" in data and isinstance(data["answers"], dict):
+                    data["answers"] = {int(k): v for k, v in data["answers"].items()}
+                print(f"✅ Progress loaded from Firebase for {name}")
+                return data
         except Exception as e:
-            print(f"Firebase load failed: {e}, falling back to JSON")
+            print(f"⚠️ Firebase load failed: {e}, falling back to JSON")
 
     # Fallback to JSON file
     if not os.path.exists(filename):
