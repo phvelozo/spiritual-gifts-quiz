@@ -10,6 +10,7 @@ Um questionário interativo para descobrir seus dons espirituais através de 45 
 - ✅ Interface web com Streamlit
 - ✅ Suporte para múltiplos usuários
 - ✅ Retomar questionário de onde parou
+- ✅ **Integração com Firebase** para persistência em nuvem (opcional)
 
 ## 📦 Dons Espirituais Avaliados
 
@@ -57,6 +58,10 @@ python3 test.py
 streamlit run streamlit_app.py
 ```
 
+4. **(Opcional)** Configure Firebase para persistência em nuvem:
+   - Veja o guia completo em [`FIREBASE_SETUP.md`](FIREBASE_SETUP.md)
+   - Sem Firebase, o app usará arquivos JSON locais
+
 ## 🌐 Deploy Online
 
 ### Opção 1: Streamlit Cloud (Gratuito)
@@ -87,16 +92,35 @@ git push heroku main
 
 ```
 spiritual-gifts-quiz/
-├── test.py              # Versão CLI do questionário
-├── streamlit_app.py     # Versão web com Streamlit
-├── requirements.txt     # Dependências Python
-├── quiz_progress.json   # Dados salvos dos usuários
-└── README.md           # Este arquivo
+├── test.py                        # Versão CLI do questionário
+├── streamlit_app.py               # Versão web com Streamlit
+├── requirements.txt               # Dependências Python
+├── quiz_progress.json             # Dados salvos (fallback local)
+├── README.md                      # Este arquivo
+├── FIREBASE_SETUP.md              # Guia de setup do Firebase
+├── .streamlit/
+│   └── secrets.toml.example       # Template de configuração Firebase
+└── .gitignore                     # Arquivos ignorados pelo Git
 ```
 
 ## 💾 Dados Salvos
 
-O progresso é salvo automaticamente em `quiz_progress.json`. Cada usuário pode:
+O progresso é salvo automaticamente com duas opções:
+
+### 🔥 Firebase Firestore (Recomendado para produção)
+
+- Dados persistem na nuvem
+- Funciona em Streamlit Cloud
+- Gratuito até 50K leituras/dia
+- [Guia de setup completo](FIREBASE_SETUP.md)
+
+### 📄 Arquivo JSON Local (Fallback automático)
+
+- Usado quando Firebase não está configurado
+- Ideal para testes locais
+- Salvo em `quiz_progress.json`
+
+Cada usuário pode:
 
 - Pausar e continuar depois
 - Voltar e corrigir respostas
@@ -104,11 +128,9 @@ O progresso é salvo automaticamente em `quiz_progress.json`. Cada usuário pode
 
 ## 🔒 Privacidade
 
-Os dados são salvos localmente no arquivo JSON. Para uso em produção, considere:
-
-- Usar banco de dados (PostgreSQL, MongoDB)
-- Adicionar autenticação
-- Implementar backups regulares
+- Firebase: dados armazenados no Google Cloud (veja regras de segurança no setup)
+- JSON local: dados salvos apenas no servidor
+- Para produção: considere adicionar autenticação de usuários
 
 ## 📝 Licença
 

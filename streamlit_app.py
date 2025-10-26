@@ -6,6 +6,31 @@ import streamlit as st
 
 from test import QuizScorer, gift_names, gifts, questions
 
+# Firebase setup
+try:
+    import firebase_admin
+    from firebase_admin import credentials, firestore
+
+    # Initialize Firebase (only once)
+    if not firebase_admin._apps:
+        # Try to get credentials from Streamlit secrets
+        if "firebase" in st.secrets:
+            cred_dict = dict(st.secrets["firebase"])
+            cred = credentials.Certificate(cred_dict)
+            firebase_admin.initialize_app(cred)
+            db = firestore.client()
+            FIREBASE_ENABLED = True
+        else:
+            FIREBASE_ENABLED = False
+            db = None
+    else:
+        db = firestore.client()
+        FIREBASE_ENABLED = True
+except Exception as e:
+    FIREBASE_ENABLED = False
+    db = None
+    print(f"Firebase not available: {e}")
+
 # Configure page
 st.set_page_config(
     page_title="Teste de Dons Espirituais", page_icon="🎁", layout="centered"
@@ -23,28 +48,49 @@ if "quiz_started" not in st.session_state:
 
 
 def save_progress_web(name, scorer, filename="quiz_progress.json"):
-    """Save user progress to JSON file."""
-    data = {}
-    if os.path.exists(filename):
-        try:
-            with open(filename, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except:
-            data = {}
-
-    data[name] = {
+    """Save user progress to Firebase or JSON file as fallback."""
+    progress_data = {
         "answers": scorer.answers,
         "scores": scorer.scores,
         "last_updated": datetime.now().isoformat(),
         "completed": len(scorer.answers) == 45,
     }
 
+    # Try Firebase first
+    if FIREBASE_ENABLED and db:
+        try:
+            db.collection("quiz_progress").document(name).set(progress_data)
+            return
+        except Exception as e:
+            print(f"Firebase save failed: {e}, falling back to JSON")
+
+    # Fallback to JSON file
+    data = {}
+    if os.path.exists(filename):
+        try:
+            with open(filename, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            data = {}
+
+    data[name] = progress_data
+
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
 def load_progress_web(name, filename="quiz_progress.json"):
-    """Load user progress from JSON file."""
+    """Load user progress from Firebase or JSON file as fallback."""
+    # Try Firebase first
+    if FIREBASE_ENABLED and db:
+        try:
+            doc = db.collection("quiz_progress").document(name).get()
+            if doc.exists:
+                return doc.to_dict()
+        except Exception as e:
+            print(f"Firebase load failed: {e}, falling back to JSON")
+
+    # Fallback to JSON file
     if not os.path.exists(filename):
         return None
 
@@ -52,7 +98,7 @@ def load_progress_web(name, filename="quiz_progress.json"):
         with open(filename, "r", encoding="utf-8") as f:
             data = json.load(f)
             return data.get(name)
-    except:
+    except (json.JSONDecodeError, IOError):
         return None
 
 

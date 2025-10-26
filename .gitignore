@@ -1,3 +1,11 @@
+# Streamlit secrets
+.streamlit/secrets.toml
+
+# Firebase credentials
+firebase-credentials.json
+*.json
+!quiz_progress.json
+
 # Python
 __pycache__/
 *.py[cod]
@@ -7,17 +15,8 @@ __pycache__/
 env/
 venv/
 ENV/
-build/
-dist/
-*.egg-info/
 
-# Streamlit
-.streamlit/secrets.toml
-
-# Data files (opcional - remova se quiser versionar o progresso)
-# quiz_progress.json
-
-# IDEs
+# IDE
 .vscode/
 .idea/
 *.swp
@@ -27,7 +26,3 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
-
-# Logs
-*.log
-
