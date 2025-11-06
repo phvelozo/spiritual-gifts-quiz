@@ -6,6 +6,10 @@ firebase-credentials.json
 *.json
 !quiz_progress.json
 
+serviceAccountKey.json
+.env
+secrets.toml
+
 # Python
 __pycache__/
 *.py[cod]

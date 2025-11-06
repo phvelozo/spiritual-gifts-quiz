@@ -55,7 +55,9 @@ That's it! Your app now saves to Firebase! 🎉
 1. Start a quiz and answer a few questions
 2. Click "💾 Salvar e Sair"
 3. Go to Firebase Console → Firestore Database
-4. You should see: `quiz_progress` → `[your-name]` → data
+4. You should see: `quiz_progress` → `[normalized-name]` → data
+
+**Note**: Usernames are automatically normalized (e.g., "João Silva" becomes `joao_silva` as the document ID). The original name is preserved in the `display_name` field.
 
 ## 🌐 For Streamlit Cloud Deployment
 

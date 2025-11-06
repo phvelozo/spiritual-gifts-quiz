@@ -94,6 +94,7 @@ git push heroku main
 spiritual-gifts-quiz/
 ├── test.py                        # Versão CLI do questionário
 ├── streamlit_app.py               # Versão web com Streamlit
+├── migrate_firebase_keys.py      # Script de migração de chaves Firebase
 ├── requirements.txt               # Dependências Python
 ├── quiz_progress.json             # Dados salvos (fallback local)
 ├── README.md                      # Este arquivo
@@ -125,6 +126,35 @@ Cada usuário pode:
 - Pausar e continuar depois
 - Voltar e corrigir respostas
 - Ver seus resultados finais
+
+## 🔑 Armazenamento de Dados por Nome de Usuário
+
+O sistema usa **chaves normalizadas** para armazenar dados de usuários, garantindo:
+
+- ✅ **Case-insensitive**: "Paulo", "paulo" e "PAULO" são tratados como o mesmo usuário
+- ✅ **Caracteres especiais**: "Maíra" e "Maira" são normalizados corretamente
+- ✅ **Espaços**: "João Silva" vira "joao_silva" internamente
+- ✅ **Compatibilidade Firebase**: Chaves seguras para IDs de documentos
+- ✅ **Preservação de nomes**: O nome original é salvo em `display_name` para exibição
+
+### Migração de Dados Existentes
+
+Se você já tem dados no Firebase com nomes originais, execute o script de migração:
+
+```bash
+# Primeiro, veja o que será migrado (modo dry-run)
+python migrate_firebase_keys.py
+
+# Depois, execute a migração real
+python migrate_firebase_keys.py --execute
+```
+
+O script irá:
+
+- Migrar documentos antigos para chaves normalizadas
+- Adicionar o campo `display_name` para preservar nomes originais
+- Manter todos os dados existentes
+- Funcionar automaticamente durante o uso normal (migração sob demanda)
 
 ## 🔒 Privacidade
 

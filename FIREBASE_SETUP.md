@@ -1,152 +1,205 @@
-# 🔥 Firebase Setup Guide
+# Firebase Setup for Spiritual Gifts Quiz
 
-This guide will help you set up Firebase Firestore for persistent quiz data storage.
+## 🔥 Firebase Integration
 
-## Why Firebase?
+Your quiz application now supports Firebase Firestore for data storage! This allows reports to pull data from the cloud database instead of local JSON files.
 
-- ✅ Free tier (50K reads/20K writes per day)
-- ✅ No server management needed
-- ✅ Data persists across app restarts
-- ✅ Perfect for Streamlit Cloud deployment
+## Setup Options
 
-## Step-by-Step Setup
+The application will automatically try these methods in order:
 
-### 1. Create a Firebase Project
+### Option 1: Streamlit Secrets (For Streamlit Cloud)
+
+Already configured in your `streamlit_app.py`
+
+### Option 2: Environment Variable (For Local Development)
+
+```bash
+export FIREBASE_CREDENTIALS="/path/to/your/serviceAccountKey.json"
+```
+
+### Option 3: Local JSON File (Easiest for Testing)
+
+1. Download your Firebase service account key from Firebase Console
+2. Save it as `serviceAccountKey.json` in the project root
+3. **IMPORTANT**: Add it to `.gitignore` to avoid committing credentials!
+
+```bash
+# Add to .gitignore
+echo "serviceAccountKey.json" >> .gitignore
+```
+
+## How to Get Firebase Credentials
 
 1. Go to [Firebase Console](https://console.firebase.google.com/)
-2. Click **"Add project"** or **"Create a project"**
-3. Enter project name (e.g., `spiritual-gifts-quiz`)
-4. Disable Google Analytics (optional)
-5. Click **"Create project"**
+2. Select your project
+3. Go to **Project Settings** (gear icon)
+4. Navigate to **Service Accounts** tab
+5. Click **Generate New Private Key**
+6. Save the downloaded JSON file as `serviceAccountKey.json`
 
-### 2. Create Firestore Database
+## Usage
 
-1. In your Firebase project, click **"Firestore Database"** in the left menu
-2. Click **"Create database"**
-3. Choose **"Start in production mode"** (we'll set rules next)
-4. Select your region (choose closest to your users)
-5. Click **"Enable"**
+### Command Line Interface
 
-### 3. Set Firestore Security Rules
+```bash
+# Run the application
+python test.py
 
-1. In Firestore Database, go to the **"Rules"** tab
-2. Replace the rules with:
-
+# The app will show Firebase status:
+# ✅ Status: Conectado ao Firebase
+# or
+# 📄 Status: Modo local (JSON)
 ```
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /quiz_progress/{document=**} {
-      allow read, write: if true;
-    }
-  }
+
+### Programmatic Usage
+
+```python
+from test import init_firebase, generate_gift_report, display_gift_report
+
+# Initialize Firebase
+init_firebase()
+
+# Generate report from Firebase
+report = generate_gift_report(use_firebase=True)
+
+# Or use JSON fallback only
+report = generate_gift_report(use_firebase=False)
+
+# Display formatted report
+display_gift_report()
+```
+
+## Data Structure in Firebase
+
+**Collection**: `quiz_progress`
+
+**Documents**: Each document ID is a **normalized username key** (e.g., `paulo`, `maira`, `joao_silva`)
+
+**Document structure**:
+
+```json
+{
+  "display_name": "Paulo",  // Original username for display
+  "answers": {
+    "1": 3,
+    "2": 2,
+    "3": 1,
+    ...
+  },
+  "scores": {
+    "A": 12,
+    "B": 10,
+    "C": 8,
+    ...
+  },
+  "last_updated": "2025-11-03T10:30:00",
+  "completed": true,
+  "church_name": "Igreja Central"  // Optional
 }
 ```
 
-3. Click **"Publish"**
+### Username Normalization
 
-> ⚠️ **Note**: These rules allow public read/write. For production, you should add authentication or more restrictive rules.
+The system automatically normalizes usernames to create safe, consistent document IDs:
 
-### 4. Get Service Account Credentials
+- **Case-insensitive**: "Paulo", "paulo", "PAULO" → all become `paulo`
+- **Unicode handling**: "Maíra" → `maira` (accents removed)
+- **Spaces**: "João Silva" → `joao_silva` (spaces become underscores)
+- **Special characters**: Removed for Firebase compatibility
+- **Display name preserved**: Original name stored in `display_name` field
 
-1. Click the **⚙️ gear icon** (Settings) → **"Project settings"**
-2. Go to the **"Service accounts"** tab
-3. Click **"Generate new private key"**
-4. Click **"Generate key"** (a JSON file will download)
-5. **Keep this file secure!** It contains sensitive credentials
+**Examples**:
+- Input: "Paulo" → Document ID: `paulo`
+- Input: "Maíra" → Document ID: `maira`
+- Input: "João Silva" → Document ID: `joao_silva`
+- Input: "Tião" → Document ID: `tiao`
 
-### 5. Configure Streamlit Secrets
+### Migrating Existing Data
 
-#### For Local Development:
-
-Create a `.streamlit/secrets.toml` file in your project:
-
-```toml
-[firebase]
-type = "service_account"
-project_id = "your-project-id"
-private_key_id = "your-private-key-id"
-private_key = "-----BEGIN PRIVATE KEY-----\nYour-Private-Key-Here\n-----END PRIVATE KEY-----\n"
-client_email = "your-service-account@your-project.iam.gserviceaccount.com"
-client_id = "your-client-id"
-auth_uri = "https://accounts.google.com/o/oauth2/auth"
-token_uri = "https://oauth2.googleapis.com/token"
-auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
-client_x509_cert_url = "your-cert-url"
-```
-
-Copy the values from the downloaded JSON file.
-
-> ⚠️ **Important**: Add `.streamlit/` to your `.gitignore` file!
-
-#### For Streamlit Cloud Deployment:
-
-1. Go to your app on [Streamlit Cloud](https://share.streamlit.io/)
-2. Click the **⋮** menu → **"Settings"**
-3. Go to the **"Secrets"** section
-4. Paste the same TOML configuration above
-5. Click **"Save"**
-
-### 6. Test the Setup
-
-1. Install dependencies:
+If you have existing Firebase data with original usernames as document IDs, use the migration script:
 
 ```bash
-pip install -r requirements.txt
+# Preview what will be migrated (dry-run)
+python migrate_firebase_keys.py
+
+# Execute the migration
+python migrate_firebase_keys.py --execute
 ```
 
-2. Run your app:
+The migration script will:
+- ✅ Find all documents that need normalization
+- ✅ Create new documents with normalized keys
+- ✅ Add `display_name` field to preserve original names
+- ✅ Delete old documents after migration
+- ✅ Skip documents that are already normalized
+- ✅ Handle conflicts gracefully
+
+**Note**: The app also migrates data automatically when users save their progress, but running the script is recommended for bulk migration.
+
+## Features
+
+### 1. Gift Report (Ranking by Gift)
+
+Shows all participants ranked by their score for each gift:
+
+```
+A: Profecia
+────────────────────────────────────────────────────────────
+  1. Paulo                 - 15 pontos
+  2. Thomas                - 14 pontos
+  3. test                  - 13 pontos
+
+B: Serviço
+────────────────────────────────────────────────────────────
+  1. Nelson                - 14 pontos
+  2. test                  - 12 pontos
+```
+
+### 2. Participant Summary
+
+Shows all participants with their top gift and completion status:
+
+```
+Nome                 Dom Principal    Pontuação    Status
+────────────────────────────────────────────────────────────
+Paulo                Profecia         15           ✓ Completo
+Nelson               Serviço          14           ✓ Completo
+test                 Ensino           12           ⚠ Incompleto
+```
+
+## Automatic Fallback
+
+The application automatically falls back to JSON files if:
+
+- Firebase credentials are not found
+- Firebase initialization fails
+- Network connection is unavailable
+
+This ensures the app works in all environments!
+
+## Security Notes
+
+⚠️ **Never commit your Firebase credentials to version control!**
+
+Always add to `.gitignore`:
+
+```
+serviceAccountKey.json
+.env
+secrets.toml
+```
+
+## Dependencies
+
+Make sure you have the Firebase Admin SDK installed:
 
 ```bash
-streamlit run streamlit_app.py
+pip install firebase-admin
 ```
 
-3. Complete a few quiz questions and click **"💾 Salvar e Sair"**
-4. Check Firebase Console → Firestore Database
-5. You should see a new collection called `quiz_progress` with your data!
+If not already in `requirements.txt`, add it:
 
-## Troubleshooting
-
-### "Firebase not available" message
-
-- Check that `firebase-admin` is installed: `pip install firebase-admin`
-- Verify your `secrets.toml` file is in the `.streamlit/` folder
-- Check that the `[firebase]` section is properly formatted
-
-### "Permission denied" errors
-
-- Make sure Firestore security rules allow read/write
-- Verify your service account has the correct permissions
-
-### Data not saving
-
-- Check Streamlit logs for error messages
-- Verify Firebase credentials are correct
-- Try the fallback JSON mode first (remove secrets temporarily)
-
-## Fallback Mode
-
-The app automatically falls back to local JSON file storage if:
-
-- Firebase credentials are not configured
-- Firebase connection fails
-- You're testing locally
-
-This means the app will work even without Firebase setup!
-
-## Security Best Practices
-
-For production apps:
-
-1. **Enable Authentication**: Use Firebase Authentication or Streamlit auth
-2. **Update Security Rules**: Restrict access to authenticated users only
-3. **Use Environment Variables**: For sensitive credentials
-4. **Monitor Usage**: Check Firebase Console for quota usage
-5. **Add Data Validation**: Validate user input before saving
-
-## Support
-
-If you need help:
-
-- [Firebase Documentation](https://firebase.google.com/docs/firestore)
-- [Streamlit Secrets Management](https://docs.streamlit.io/streamlit-community-cloud/deploy-your-app/secrets-management)
+```
+firebase-admin>=6.0.0
+```

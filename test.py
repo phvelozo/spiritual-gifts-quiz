@@ -229,6 +229,42 @@ def calculate_scores_batch(answers, gifts_config):
     return scores
 
 
+def normalize_username_key(name):
+    """
+    Normalize username to create a safe, consistent key for storage.
+    Same implementation as in streamlit_app.py for consistency.
+    """
+    import re
+    import unicodedata
+    
+    if not name:
+        return ""
+    
+    # Normalize Unicode characters (e.g., "Maíra" -> "Maira")
+    name = unicodedata.normalize('NFKD', name)
+    
+    # Convert to lowercase
+    name = name.lower()
+    
+    # Replace spaces with underscores
+    name = name.replace(' ', '_')
+    
+    # Remove or replace special characters, keep only alphanumeric and underscores
+    name = re.sub(r'[^a-z0-9_-]', '', name)
+    
+    # Remove multiple consecutive underscores
+    name = re.sub(r'_+', '_', name)
+    
+    # Remove leading/trailing underscores
+    name = name.strip('_')
+    
+    # Ensure it's not empty (fallback to 'user' if somehow empty)
+    if not name:
+        name = 'user'
+    
+    return name
+
+
 def save_progress(name, scorer, filename="quiz_progress.json"):
     """
     Save user progress to a JSON file.
@@ -242,17 +278,30 @@ def save_progress(name, scorer, filename="quiz_progress.json"):
     import os
     from datetime import datetime
 
+    # Normalize the username to create a safe key
+    normalized_key = normalize_username_key(name)
+
     # Load existing data or create new
     data = {}
     if os.path.exists(filename):
         try:
             with open(filename, "r", encoding="utf-8") as f:
                 data = json.load(f)
-        except:
+        except (json.JSONDecodeError, IOError):
             data = {}
 
+    # Use normalized key, but also check for backward compatibility
+    # If old key exists, migrate it
+    if name in data and name != normalized_key:
+        # Migrate old data to new normalized key
+        old_data = data.pop(name)
+        if "display_name" not in old_data:
+            old_data["display_name"] = name
+        data[normalized_key] = old_data
+
     # Save user's progress
-    data[name] = {
+    data[normalized_key] = {
+        "display_name": name,  # Store original name for display
         "answers": scorer.answers,
         "scores": scorer.scores,
         "last_updated": datetime.now().isoformat(),
@@ -277,15 +326,344 @@ def load_progress(name, filename="quiz_progress.json"):
     import json
     import os
 
+    # Normalize the username to create a safe key
+    normalized_key = normalize_username_key(name)
+
     if not os.path.exists(filename):
         return None
 
     try:
         with open(filename, "r", encoding="utf-8") as f:
             data = json.load(f)
-            return data.get(name)
-    except:
+            # Try normalized key first
+            if normalized_key in data:
+                return data[normalized_key]
+            # Fallback: try original name for backward compatibility
+            if name in data:
+                return data[name]
+            return None
+    except (json.JSONDecodeError, IOError):
         return None
+
+
+# Firebase configuration
+FIREBASE_ENABLED = False
+db = None
+
+
+def init_firebase():
+    """
+    Initialize Firebase connection.
+    Can be called from Streamlit or standalone scripts.
+    """
+    global FIREBASE_ENABLED, db
+
+    try:
+        import firebase_admin
+        from firebase_admin import credentials, firestore
+
+        # Check if already initialized
+        if firebase_admin._apps:
+            db = firestore.client()
+            FIREBASE_ENABLED = True
+            return True
+
+        # Try different credential sources
+        # 1. Try Streamlit secrets (if running in Streamlit)
+        try:
+            import streamlit as st
+
+            if "firebase" in st.secrets:
+                cred_dict = {
+                    "type": str(st.secrets["firebase"]["type"]),
+                    "project_id": str(st.secrets["firebase"]["project_id"]),
+                    "private_key_id": str(st.secrets["firebase"]["private_key_id"]),
+                    "private_key": str(st.secrets["firebase"]["private_key"]),
+                    "client_email": str(st.secrets["firebase"]["client_email"]),
+                    "client_id": str(st.secrets["firebase"]["client_id"]),
+                    "auth_uri": str(st.secrets["firebase"]["auth_uri"]),
+                    "token_uri": str(st.secrets["firebase"]["token_uri"]),
+                    "auth_provider_x509_cert_url": str(
+                        st.secrets["firebase"]["auth_provider_x509_cert_url"]
+                    ),
+                    "client_x509_cert_url": str(
+                        st.secrets["firebase"]["client_x509_cert_url"]
+                    ),
+                }
+                if "universe_domain" in st.secrets["firebase"]:
+                    cred_dict["universe_domain"] = str(
+                        st.secrets["firebase"]["universe_domain"]
+                    )
+
+                cred = credentials.Certificate(cred_dict)
+                firebase_admin.initialize_app(cred)
+                db = firestore.client()
+                FIREBASE_ENABLED = True
+                print("✅ Firebase initialized from Streamlit secrets")
+                return True
+        except ImportError:
+            pass  # Streamlit not available
+
+        # 2. Try environment variable with path to service account JSON
+        import os
+
+        firebase_cred_path = os.environ.get("FIREBASE_CREDENTIALS")
+        if firebase_cred_path and os.path.exists(firebase_cred_path):
+            cred = credentials.Certificate(firebase_cred_path)
+            firebase_admin.initialize_app(cred)
+            db = firestore.client()
+            FIREBASE_ENABLED = True
+            print("✅ Firebase initialized from credentials file")
+            return True
+
+        # 3. Try local serviceAccountKey.json
+        if os.path.exists("serviceAccountKey.json"):
+            cred = credentials.Certificate("serviceAccountKey.json")
+            firebase_admin.initialize_app(cred)
+            db = firestore.client()
+            FIREBASE_ENABLED = True
+            print("✅ Firebase initialized from serviceAccountKey.json")
+            return True
+
+        print("ℹ️ Firebase credentials not found, using JSON file fallback")
+        return False
+
+    except Exception as e:
+        print(f"⚠️ Firebase initialization failed: {e}")
+        FIREBASE_ENABLED = False
+        db = None
+        return False
+
+
+def get_all_participants_firebase():
+    """
+    Get all participants data from Firebase.
+
+    Returns:
+        dict: {name: {answers, scores, last_updated, completed}}
+    """
+    if not FIREBASE_ENABLED or not db:
+        return {}
+
+    try:
+        docs = db.collection("quiz_progress").stream()
+        data = {}
+        for doc in docs:
+            doc_data = doc.to_dict()
+            # Convert string keys back to integers for answers
+            if "answers" in doc_data and isinstance(doc_data["answers"], dict):
+                doc_data["answers"] = {
+                    int(k): v for k, v in doc_data["answers"].items()
+                }
+            data[doc.id] = doc_data
+        return data
+    except Exception as e:
+        print(f"⚠️ Failed to fetch from Firebase: {e}")
+        return {}
+
+
+def generate_gift_report(
+    filename="quiz_progress.json", only_completed=True, use_firebase=True
+):
+    """
+    Generate a report showing all participants ranked by score for each gift.
+    Tries Firebase first, then falls back to JSON file.
+
+    Args:
+        filename: JSON file with saved progress (fallback)
+        only_completed: If True, only include completed quizzes
+        use_firebase: If True, try to fetch from Firebase first
+
+    Returns:
+        dict: {gift: [(name, score), ...]} sorted by score descending
+    """
+    import json
+    import os
+
+    data = {}
+
+    # Try Firebase first if enabled
+    if use_firebase and FIREBASE_ENABLED and db:
+        print("📊 Fetching data from Firebase...")
+        data = get_all_participants_firebase()
+        if data:
+            print(f"✅ Retrieved {len(data)} participants from Firebase")
+
+    # Fallback to JSON file if Firebase didn't work
+    if not data:
+        if os.path.exists(filename):
+            print(f"📊 Loading data from {filename}...")
+            try:
+                with open(filename, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                print(f"✅ Retrieved {len(data)} participants from JSON file")
+            except (json.JSONDecodeError, IOError):
+                print("❌ Failed to load JSON file")
+                return {}
+        else:
+            print("❌ No data source available")
+            return {}
+
+    # Organize data by gift
+    report = {gift: [] for gift in gifts.keys()}
+
+    for key, user_data in data.items():
+        # Skip incomplete quizzes if requested
+        if only_completed and not user_data.get("completed", False):
+            continue
+
+        # Use display_name if available, otherwise fall back to key
+        display_name = user_data.get("display_name", key)
+        scores = user_data.get("scores", {})
+
+        # Add each user's score to each gift
+        for gift, score in scores.items():
+            report[gift].append((display_name, score))
+
+    # Sort each gift by score (descending)
+    for gift in report:
+        report[gift].sort(key=lambda x: x[1], reverse=True)
+
+    return report
+
+
+def display_gift_report(filename="quiz_progress.json", use_firebase=True):
+    """
+    Display a formatted report showing all participants ranked by gift scores.
+    Uses Firebase by default, falls back to JSON file.
+    """
+    # Show data source
+    if use_firebase and FIREBASE_ENABLED:
+        print("\n🔥 Conectado ao Firebase\n")
+    elif use_firebase and not FIREBASE_ENABLED:
+        print("\n📄 Firebase não disponível, usando arquivo local\n")
+
+    report = generate_gift_report(filename, use_firebase=use_firebase)
+
+    if not report or all(len(scores) == 0 for scores in report.values()):
+        print("\n❌ Nenhum dado encontrado. Complete alguns questionários primeiro.\n")
+        return
+
+    print("\n" + "=" * 80)
+    print("📊 RELATÓRIO DE DONS ESPIRITUAIS - RANKING POR DOM")
+    print("=" * 80)
+
+    for gift in sorted(report.keys()):
+        gift_name = gift_names.get(gift, gift)
+        participants = report[gift]
+
+        if not participants:
+            continue
+
+        print(f"\n{gift}: {gift_name}")
+        print("─" * 60)
+
+        for rank, (name, score) in enumerate(participants, 1):
+            print(f"  {rank}. {name:20s} - {score:2d} pontos")
+
+    print("\n" + "=" * 80 + "\n")
+
+
+def get_top_performers_by_gift(
+    filename="quiz_progress.json", top_n=3, use_firebase=True
+):
+    """
+    Get top N performers for each gift.
+
+    Args:
+        filename: JSON file with saved progress (fallback)
+        top_n: Number of top performers to return per gift
+        use_firebase: If True, try to fetch from Firebase first
+
+    Returns:
+        dict: {gift: [(name, score), ...]}
+    """
+    report = generate_gift_report(filename, use_firebase=use_firebase)
+
+    top_performers = {}
+    for gift, rankings in report.items():
+        top_performers[gift] = rankings[:top_n]
+
+    return top_performers
+
+
+def generate_participant_summary(filename="quiz_progress.json", use_firebase=True):
+    """
+    Generate a summary report of all participants with their top gifts.
+    Uses Firebase by default, falls back to JSON file.
+
+    Args:
+        filename: JSON file with saved progress (fallback)
+        use_firebase: If True, try to fetch from Firebase first
+
+    Returns:
+        list: [(name, top_gift, top_score, completed), ...]
+    """
+    import json
+    import os
+
+    data = {}
+
+    # Try Firebase first if enabled
+    if use_firebase and FIREBASE_ENABLED and db:
+        data = get_all_participants_firebase()
+
+    # Fallback to JSON file if Firebase didn't work
+    if not data:
+        if os.path.exists(filename):
+            try:
+                with open(filename, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                return []
+        else:
+            return []
+
+    summary = []
+
+    for key, user_data in data.items():
+        # Use display_name if available, otherwise fall back to key
+        display_name = user_data.get("display_name", key)
+        scores = user_data.get("scores", {})
+        completed = user_data.get("completed", False)
+
+        if scores:
+            top_gift = max(scores.items(), key=lambda x: x[1])
+            summary.append((display_name, top_gift[0], top_gift[1], completed))
+
+    return sorted(summary, key=lambda x: x[2], reverse=True)
+
+
+def display_participant_summary(filename="quiz_progress.json", use_firebase=True):
+    """
+    Display a summary of all participants with their top gift.
+    Uses Firebase by default, falls back to JSON file.
+    """
+    # Show data source
+    if use_firebase and FIREBASE_ENABLED:
+        print("\n🔥 Conectado ao Firebase\n")
+    elif use_firebase and not FIREBASE_ENABLED:
+        print("\n📄 Firebase não disponível, usando arquivo local\n")
+
+    summary = generate_participant_summary(filename, use_firebase=use_firebase)
+
+    if not summary:
+        print("\n❌ Nenhum participante encontrado.\n")
+        return
+
+    print("\n" + "=" * 80)
+    print("👥 RESUMO DE PARTICIPANTES")
+    print("=" * 80)
+    print(f"\nTotal de participantes: {len(summary)}\n")
+    print(f"{'Nome':<20} {'Dom Principal':<15} {'Pontuação':<12} {'Status'}")
+    print("─" * 60)
+
+    for name, gift, score, completed in summary:
+        gift_name = gift_names.get(gift, gift)
+        status = "✓ Completo" if completed else "⚠ Incompleto"
+        print(f"{name:<20} {gift_name:<15} {score:<12} {status}")
+
+    print("\n" + "=" * 80 + "\n")
 
 
 def run_interactive_quiz():
@@ -315,7 +693,7 @@ def run_interactive_quiz():
 
     if saved_progress and not saved_progress.get("completed", False):
         num_answered = len(saved_progress["answers"])
-        print(f"📋 Encontramos um questionário em andamento!")
+        print("📋 Encontramos um questionário em andamento!")
         print(f"   Você respondeu {num_answered} de 45 perguntas.")
         print()
 
@@ -338,7 +716,7 @@ def run_interactive_quiz():
             else:
                 print("❌ Por favor, responda 's' para sim ou 'n' para não.")
     elif saved_progress and saved_progress.get("completed", False):
-        print(f"✓ Você já completou este questionário anteriormente!")
+        print("✓ Você já completou este questionário anteriormente!")
         print()
         while True:
             choice = input("Deseja refazer o questionário? (s/n): ").strip().lower()
@@ -460,7 +838,49 @@ def run_interactive_quiz():
     return scorer
 
 
+def main_menu():
+    """
+    Main menu for the Spiritual Gifts Quiz application.
+    """
+    # Try to initialize Firebase on startup
+    print("\n🔄 Inicializando aplicação...\n")
+    init_firebase()
+
+    while True:
+        print("\n" + "=" * 80)
+        print("TESTE DE DONS ESPIRITUAIS - MENU PRINCIPAL")
+        print("=" * 80)
+
+        # Show Firebase status
+        if FIREBASE_ENABLED:
+            print("\n✅ Status: Conectado ao Firebase")
+        else:
+            print("\n📄 Status: Modo local (JSON)")
+
+        print("\nEscolha uma opção:")
+        print("  1. Fazer o questionário")
+        print("  2. Ver relatório por dons (ranking)")
+        print("  3. Ver resumo de participantes")
+        print("  4. Sair")
+        print()
+
+        choice = input("Opção: ").strip()
+
+        if choice == "1":
+            run_interactive_quiz()
+        elif choice == "2":
+            display_gift_report()
+            input("\nPressione ENTER para continuar...")
+        elif choice == "3":
+            display_participant_summary()
+            input("\nPressione ENTER para continuar...")
+        elif choice == "4":
+            print("\n👋 Até logo!\n")
+            break
+        else:
+            print("\n❌ Opção inválida. Por favor, escolha 1, 2, 3 ou 4.")
+
+
 # Example usage
 if __name__ == "__main__":
-    # Run the interactive quiz
-    run_interactive_quiz()
+    main_menu()
